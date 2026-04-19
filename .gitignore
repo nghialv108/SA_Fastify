@@ -1,0 +1,7 @@
+api-gateway/node_modules
+
+project-service/node_modules
+
+task-service/node_modules
+
+user-service/node_modules

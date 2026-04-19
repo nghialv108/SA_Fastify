@@ -1,0 +1,75 @@
+services:
+  # 1. Thêm Service MongoDB
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db # Lưu trữ dữ liệu vĩnh viễn
+    networks:
+      - pms-net
+
+  user-service:
+    build: ./user-service
+    volumes:
+      - ./user-service:/app
+      - /app/node_modules
+      - ./proto:/proto
+    environment:
+      # Kết nối riêng vào database có tên: user_db
+      - MONGO_URI=mongodb://mongodb:27017/user_db
+    depends_on:
+      - mongodb
+    networks:
+      - pms-net
+
+  project-service:
+    build: ./project-service
+    volumes:
+      - ./project-service:/app
+      - /app/node_modules
+      - ./proto:/proto
+    environment:
+      # Kết nối riêng vào database có tên: project_db
+      - MONGO_URI=mongodb://mongodb:27017/project_db
+    depends_on:
+      - mongodb
+    networks:
+      - pms-net
+
+  task-service:
+    build: ./task-service
+    volumes:
+      - ./task-service:/app
+      - /app/node_modules
+      - ./proto:/proto
+    environment:
+      # Kết nối riêng vào database có tên: task_db
+      - MONGO_URI=mongodb://mongodb:27017/task_db
+    depends_on:
+      - mongodb
+    networks:
+      - pms-net
+
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./api-gateway:/app
+      - /app/node_modules
+      - ./proto:/proto
+    depends_on:
+      - user-service
+      - project-service
+      - task-service
+    networks:
+      - pms-net
+
+networks:
+  pms-net:
+    driver: bridge
+
+# Khai báo volume cho MongoDB
+volumes:
+  mongo-data:

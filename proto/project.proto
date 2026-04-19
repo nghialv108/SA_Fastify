@@ -1,0 +1,13 @@
+syntax = "proto3";
+package project;
+// Định nghĩa dịch vụ ProjectService với các phương thức RPC
+service ProjectService {
+    // Phương thức RPC để tạo project mới
+  rpc CreateProject (CreateProjectRequest) returns (ProjectResponse);
+    // Streaming RPC để liệt kê tất cả các project
+  rpc ListProjects (Empty) returns (stream ProjectResponse); // Streaming
+}
+
+message Empty {}
+message CreateProjectRequest { string name = 1; string owner_id = 2; }
+message ProjectResponse { string id = 1; string name = 2; string owner_id = 3; }

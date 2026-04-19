@@ -1,0 +1,13 @@
+syntax = "proto3";
+package task;
+//
+service TaskService {
+    // Các phương thức RPC
+  rpc CreateTask (CreateTaskRequest) returns (TaskResponse);
+  // Streaming RPC để liệt kê tất cả các task của một project
+  rpc ListProjectTasks (ListTasksRequest) returns (stream TaskResponse); // Streaming
+}
+
+message CreateTaskRequest { string title = 1; string project_id = 2; }
+message ListTasksRequest { string project_id = 1; }
+message TaskResponse { string id = 1; string title = 2; string project_id = 3; string status = 4; }

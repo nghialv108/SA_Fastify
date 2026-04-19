@@ -1,0 +1,13 @@
+syntax = "proto3";
+package user;
+// Định nghĩa dịch vụ UserService với các phương thức RPC
+service UserService {
+    // Phương thức RPC để tạo người dùng mới
+  rpc CreateUser (CreateUserRequest) returns (UserResponse);
+  // Phương thức RPC để lấy thông tin người dùng
+  rpc GetUser (GetUserRequest) returns (UserResponse);
+}
+
+message CreateUserRequest { string name = 1; string email = 2; }
+message GetUserRequest { string id = 1; }
+message UserResponse { string id = 1; string name = 2; string email = 3; }

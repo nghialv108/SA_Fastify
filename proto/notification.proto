@@ -1,0 +1,10 @@
+syntax = "proto3";
+package notification;
+// Định nghĩa dịch vụ NotificationService với phương thức RPC để gửi thông báo
+service NotificationService {
+    // Phương thức RPC để gửi thông báo đến người dùng
+  rpc SendNotification (NotifyRequest) returns (NotifyResponse);
+}
+
+message NotifyRequest { string user_id = 1; string message = 2; }
+message NotifyResponse { bool success = 1; }
