@@ -5,14 +5,14 @@ services:
   mongodb:
     image: mongo:6.0
     # Bật Replica Set để MongoDB Change Stream hoạt động (cần cho Streaming RPC)
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    command: [ "mongod", "--replSet", "rs0", "--bind_ip_all" ]
     ports:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
-      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -27,7 +27,7 @@ services:
       - ./user-service:/app
       - /app/node_modules
       - ./proto:/proto
-      - ./shared:/shared  # ← shared/serviceRegister.js
+      - ./shared:/shared # ← shared/serviceRegister.js
     environment:
       - MONGO_URI=mongodb://mongodb:27017/user_db
       - SERVICE_NAME=user-service
@@ -75,8 +75,8 @@ services:
       - ./shared:/shared
     environment:
       - MONGO_URI=mongodb://mongodb:27017/task_db
-      - SERVICE_NAME=task-service        # ← Cùng tên để LB group lại
-      - SERVICE_HOST=task-service-1      # ← Hostname riêng của instance 1
+      - SERVICE_NAME=task-service # ← Cùng tên để LB group lại
+      - SERVICE_HOST=task-service-1 # ← Hostname riêng của instance 1
       - GRPC_PORT=50051
       - GATEWAY_URL=http://api-gateway:3000
     depends_on:
@@ -96,8 +96,8 @@ services:
       - ./shared:/shared
     environment:
       - MONGO_URI=mongodb://mongodb:27017/task_db
-      - SERVICE_NAME=task-service        # ← Cùng tên → cùng group LB
-      - SERVICE_HOST=task-service-2      # ← Hostname riêng của instance 2
+      - SERVICE_NAME=task-service # ← Cùng tên → cùng group LB
+      - SERVICE_HOST=task-service-2 # ← Hostname riêng của instance 2
       - GRPC_PORT=50051
       - GATEWAY_URL=http://api-gateway:3000
     depends_on:

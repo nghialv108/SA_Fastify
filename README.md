@@ -1,27 +1,72 @@
-# SA_Fastify — Project Management System
+# SA_Fastify — Project Management System (Microservices)
 
-Một hệ thống quản lý dự án (Project Management System) được xây dựng theo kiến trúc **Microservices** sử dụng **Fastify**, **gRPC**, và **MongoDB**, đóng gói hoàn toàn bằng **Docker Compose**.
+Hệ thống quản lý dự án xây dựng theo kiến trúc **Microservices** với:
+
+- **Fastify** làm API Gateway (HTTP/REST)
+- **gRPC** làm giao thức nội bộ giữa các service
+- **MongoDB** (Replica Set) làm cơ sở dữ liệu
+- **Service Discovery** tự cài đặt (không cần Consul / etcd)
+- **Load Balancing** Round-Robin
+- **Circuit Breaker** bảo vệ khi service sập
+- **Server-side Streaming** (SSE + gRPC Change Stream) cho real-time updates
 
 ---
 
-## Tổng quan kiến trúc
+## Kiến trúc tổng quan
 
 ```
-Client
-  │
-  ▼
-┌─────────────┐         ┌──────────────┐
-│ API Gateway │ ──gRPC──▶ user-service │───┐
-│  (port 3000)│         └──────────────┘   │
-│             │         ┌──────────────┐   │   ┌──────────┐
-│             │ ──gRPC──▶project-service│──┼───▶ MongoDB  │
-│             │         └──────────────┘   │   │  :27017  │
-│             │         ┌──────────────┐   │   └──────────┘
-│             │ ──gRPC──▶ task-service │───┘
-└─────────────┘         └──────────────┘
+                        ┌─────────────────────────────────────────────┐
+                        │              API Gateway :3000               │
+                        │                                              │
+                        │  ┌──────────────┐  ┌──────────────────────┐ │
+Client ──── HTTP ──────►│  │ HTTP Routes  │  │  Service Discovery   │ │
+                        │  │  (REST API)  │  │  /registry/register  │ │
+                        │  └──────┬───────┘  │  /registry/heartbeat │ │
+                        │         │          │  /health/...         │ │
+                        │  ┌──────▼───────┐  └──────────────────────┘ │
+                        │  │FaultTolerant │                            │
+                        │  │   Client     │                            │
+                        │  │ LB + CB +    │                            │
+                        │  │ Retry+Timeout│                            │
+                        │  └──────┬───────┘                            │
+                        └─────────┼───────────────────────────────────┘
+                                  │ gRPC
+              ┌───────────────────┼──────────────────┐
+              ▼                   ▼                  ▼
+    user-service:50051   project-service:50051   task-service-1:50051
+                                                 task-service-2:50051
+              │                   │                  │
+              ▼                   ▼                  ▼
+          MongoDB             MongoDB            MongoDB (Replica Set)
+          (user_db)         (project_db)          (task_db)
 ```
 
-Toàn bộ các service giao tiếp nội bộ qua **gRPC** (định nghĩa bằng Protobuf trong thư mục `/proto`). Mỗi service sở hữu **database riêng biệt** trên cùng một MongoDB instance theo nguyên tắc *database-per-service*.
+### Load Balancing
+
+API Gateway phân phối request đến 2 instance `task-service` theo Round-Robin:
+
+```
+Request 1  →  task-service-1
+Request 2  →  task-service-2
+Request 3  →  task-service-1
+...
+```
+
+### Circuit Breaker
+
+Mỗi service có 1 Circuit Breaker riêng. Sau 3 lỗi liên tiếp, circuit OPEN → fast-fail trong 30 giây → thử lại (HALF_OPEN).
+
+### Real-time Streaming
+
+```
+Browser ──SSE──► GET /tasks/stream/:id
+                       │
+               API Gateway (tasks-stream.js)
+                       │ gRPC Server-stream
+               task-service WatchProjectTasks()
+                       │
+               MongoDB Change Stream (Replica Set required)
+```
 
 ---
 
@@ -29,135 +74,166 @@ Toàn bộ các service giao tiếp nội bộ qua **gRPC** (định nghĩa bằ
 
 ```
 SA_Fastify/
-├── api-gateway/        # Entry point, điều phối request đến các service
-├── user-service/       # Quản lý người dùng
-├── project-service/    # Quản lý dự án
-├── task-service/       # Quản lý công việc (task)
-├── proto/              # Định nghĩa Protobuf dùng chung cho gRPC
-├── docker-compose.yml  # Orchestration toàn bộ hệ thống
-└── .gitignore
+├── api-gateway/
+│   ├── lib/                         # Shared internal modules
+│   │   ├── ServiceRegistry.js       # Service registry (singleton)
+│   │   ├── LoadBalancer.js          # Round-Robin load balancer
+│   │   ├── CircuitBreaker.js        # Circuit breaker per service
+│   │   └── FaultTolerantClient.js   # LB + CB + Retry + Timeout
+│   ├── server.js                    # Entry point, HTTP routes
+│   ├── serviceDiscovery.plugin.js   # Fastify plugin: /registry/* /health/*
+│   ├── tasks-stream.js              # SSE relay: gRPC stream → SSE
+│   └── package.json
+├── user-service/
+│   ├── server.js
+│   └── serviceRegister.js           # Tự đăng ký vào Gateway
+├── project-service/
+│   ├── server.js
+│   └── serviceRegister.js
+├── task-service/
+│   ├── server.js                    # Includes WatchProjectTasks handler
+│   └── serviceRegister.js
+├── proto/
+│   ├── user.proto
+│   ├── project.proto
+│   ├── task.proto
+│   └── notification.proto
+├── scripts/
+│   └── mongo-init.js               # Khởi tạo MongoDB Replica Set
+├── ServiceRegistry.js              # Root-level copy (tham khảo)
+└── docker-compose.yml
 ```
 
 ---
 
-## Các thành phần chính
+## Khởi động
 
-### API Gateway
-- Cổng duy nhất tiếp nhận request từ client (`localhost:3000`)
-- Định tuyến và chuyển tiếp request đến đúng microservice qua gRPC
-- Không xử lý business logic trực tiếp
+### Yêu cầu
 
-### User Service
-- Quản lý tài khoản người dùng (tạo, xác thực, cập nhật)
-- Database: `user_db` trên MongoDB
+- Docker & Docker Compose
 
-### Project Service
-- Quản lý thông tin dự án
-- Database: `project_db` trên MongoDB
-
-### Task Service
-- Quản lý các task/công việc trong dự án
-- Database: `task_db` trên MongoDB
-
-### MongoDB
-- Phiên bản: `mongo:6.0`
-- Dữ liệu được lưu trữ vĩnh viễn qua Docker volume `mongo-data`
-- Port: `27017`
-
----
-
-## Yêu cầu hệ thống
-
-- [Docker](https://www.docker.com/) >= 20.x
-- [Docker Compose](https://docs.docker.com/compose/) >= 2.x
-
----
-
-## Cài đặt & Chạy dự án
-
-### 1. Clone repository
-
-```bash
-git clone https://github.com/nghialv108/SA_Fastify.git
-cd SA_Fastify
-```
-
-### 2. Khởi động toàn bộ hệ thống
+### Chạy toàn bộ hệ thống
 
 ```bash
 docker compose up --build
 ```
 
-Lần đầu chạy sẽ mất thêm thời gian để build image. Sau khi hoàn tất, API Gateway sẽ sẵn sàng tại:
-
-```
-http://localhost:3000
-```
-
-### 3. Dừng hệ thống
+Kiểm tra API Gateway:
 
 ```bash
-docker compose down
+curl http://localhost:3000/health
 ```
 
-Để xóa luôn dữ liệu MongoDB:
+---
+
+## API Reference
+
+### Health & Monitoring
+
+| Method | Path | Mô tả |
+|--------|------|-------|
+| GET | `/health` | Trạng thái API Gateway |
+| GET | `/health/circuit-breakers` | Trạng thái từng circuit breaker |
+| GET | `/health/load-balancer` | Thống kê phân phối request (Round-Robin) |
+| GET | `/registry/status` | Toàn bộ service registry (debug) |
+
+### Users
+
+| Method | Path | Body / Params | Mô tả |
+|--------|------|---------------|-------|
+| POST | `/users` | `{ name, email }` | Tạo user mới |
+| GET | `/users/:id` | — | Lấy thông tin user |
+
+### Projects
+
+| Method | Path | Body / Params | Mô tả |
+|--------|------|---------------|-------|
+| POST | `/projects` | `{ name, description }` | Tạo project mới |
+| GET | `/projects` | — | Danh sách tất cả project |
+
+### Tasks
+
+| Method | Path | Body / Params | Mô tả |
+|--------|------|---------------|-------|
+| POST | `/tasks` | `{ title, description, project_id, assignee_id, priority }` | Tạo task |
+| GET | `/tasks/:id` | — | Lấy thông tin task |
+| PATCH | `/tasks/:id` | `{ status?, priority?, assignee_id? }` | Cập nhật task |
+| DELETE | `/tasks/:id` | — | Xoá task |
+| GET | `/projects/:id/tasks` | — | Danh sách task của project |
+| GET | `/tasks/stream/:projectId` | — | SSE stream real-time thay đổi |
+
+#### SSE Stream example
 
 ```bash
-docker compose down -v
+curl -N http://localhost:3000/tasks/stream/PROJECT_ID
 ```
 
----
-
-## Biến môi trường
-
-Các biến môi trường được cấu hình trực tiếp trong `docker-compose.yml`:
-
-| Service          | Biến              | Giá trị mặc định                         |
-|------------------|-------------------|------------------------------------------|
-| user-service     | `MONGO_URI`       | `mongodb://mongodb:27017/user_db`        |
-| project-service  | `MONGO_URI`       | `mongodb://mongodb:27017/project_db`     |
-| task-service     | `MONGO_URI`       | `mongodb://mongodb:27017/task_db`        |
+Các event types: `SNAPSHOT`, `CREATED`, `UPDATED`, `DELETED`, `HEARTBEAT`, `ERROR`
 
 ---
 
-## Công nghệ sử dụng
+## Bugs đã sửa
 
-| Công nghệ       | Vai trò                                      |
-|-----------------|----------------------------------------------|
-| **Fastify**     | HTTP framework cho API Gateway & các service |
-| **gRPC**        | Giao tiếp nội bộ giữa các microservice       |
-| **Protobuf**    | Định nghĩa contract giữa các service         |
-| **MongoDB 6.0** | Cơ sở dữ liệu NoSQL                          |
-| **Docker**      | Container hóa từng service                   |
-| **Docker Compose** | Orchestration toàn bộ hệ thống            |
-| **Node.js / JavaScript** | Ngôn ngữ lập trình chính           |
+| # | Mức độ | Vấn đề | Sửa |
+|---|--------|--------|-----|
+| 1 | Critical | `api-gateway/server.js` hardcode địa chỉ gRPC, bỏ qua toàn bộ ServiceRegistry / LoadBalancer / CircuitBreaker / FaultTolerantClient | Rewrite `server.js` dùng `FaultTolerantClient` cho mọi RPC call; đăng ký `serviceDiscoveryPlugin` |
+| 2 | Critical | `LoadBalancer.js` require `'./ServiceRegistry'` nhưng `ServiceRegistry.js` nằm ở thư mục gốc | Tạo `api-gateway/lib/` chứa tất cả internal modules; `LoadBalancer` và `ServiceRegistry` đặt cùng thư mục |
+| 3 | Critical | `serviceDiscovery.plugin.js` (3 bản copy) require `'../lib/'` không tồn tại | Tạo `api-gateway/lib/`; sửa require paths cho từng vị trí |
+| 4 | Critical | `task-service/tasks-stream.js` require `'../lib/FaultTolerantClient'` sai vị trí; file này là code của API Gateway | Di chuyển sang `api-gateway/tasks-stream.js`; sửa require thành `'./lib/FaultTolerantClient'`; implement `WatchProjectTasks` handler trong `task-service/server.js` |
+| 5 | Critical | `mongo-init.js` ở thư mục gốc nhưng `docker-compose.yml` mount `./scripts/mongo-init.js` | Di chuyển file vào `scripts/mongo-init.js` |
+| 6 | Major | `CreateTask` trả `Task` trực tiếp thay vì `TaskResponse = { task: Task }` → gRPC nhận object rỗng | Thêm helper `toResponse(doc)` wrap mọi task response trong `{ task: ... }` |
+| 7 | Major | `task-service/server.js` chỉ implement 2/6 RPC; `ListProjectTasks` sai tên (proto dùng `GetTasksByProject`) | Implement đủ 6 RPC: `CreateTask`, `GetTask`, `UpdateTask`, `DeleteTask`, `GetTasksByProject`, `WatchProjectTasks` |
+| 8 | Major | `watchProjectTasks` query dùng `projectId` trong khi schema lưu `project_id` → trả [] rỗng | Thống nhất dùng `project_id` trong schema, query, và Change Stream filter |
+| 9 | Minor | `withRetry` vòng lặp `attempt <= maxRetries` thực hiện `maxRetries + 1` lần | Đổi thành `attempt < maxRetries` |
+| 10 | Minor | `ServiceRegistry.snapshot()` label `aliveFor` gây nhầm lẫn (thực chất đo thời gian từ heartbeat cuối) | Đổi thành `secondsSinceHeartbeat` (trả về số giây) |
 
 ---
 
-## Phát triển cục bộ (Local Development)
+## Luồng Service Discovery
 
-Docker Compose được cấu hình **volume mount** mã nguồn trực tiếp vào container, nghĩa là thay đổi code sẽ được phản ánh ngay mà không cần rebuild:
-
-```bash
-# Chạy và theo dõi log realtime
-docker compose up
-
-# Chạy nền (detached mode)
-docker compose up -d
-
-# Xem log của một service cụ thể
-docker compose logs -f api-gateway
-docker compose logs -f user-service
+```
+Microservice khởi động
+        │
+        ▼
+POST /registry/register  → nhận instanceId
+        │
+        ▼
+┌─── mỗi 10 giây ───┐
+│ POST /registry/    │
+│ heartbeat          │
+│ (tự re-register   │
+│  nếu 404)          │
+└────────────────────┘
+        │
+        ▼ (SIGTERM)
+DELETE /registry/deregister
 ```
 
----
-
-## Kiến trúc mạng
-
-Tất cả các service thuộc cùng một Docker network nội bộ `pms-net` (bridge). Chỉ có **API Gateway** (`port 3000`) và **MongoDB** (`port 27017`) được expose ra máy host.
+Registry tự động xoá instance sau 30 giây không có heartbeat.
 
 ---
 
-## Tác giả
+## Thiết kế FaultTolerantClient
 
-- **nghialv108** — [GitHub](https://github.com/nghialv108)
+Mỗi gRPC unary call đi qua:
+
+```
+callUnaryRPC()
+    │
+    ▼
+CircuitBreaker.call()
+    │  OPEN? → throw fast-fail
+    ▼
+withRetry(fn, maxRetries=3)   ← gọi tối đa 3 lần
+    │
+    ▼
+LoadBalancer.pick(service)   ← Round-Robin
+    │
+    ▼
+buildClient(address)          ← cache gRPC channel
+    │
+    ▼
+callUnary(client, method)     ← 5s deadline
+```
+
+Backoff: 200ms → 400ms → 800ms

@@ -1,9 +1,9 @@
 'use strict';
 
 const fp              = require('fastify-plugin');
-const registry        = require('../lib/ServiceRegistry');
-const loadBalancer    = require('../lib/LoadBalancer');
-const circuitBreakers = require('../lib/CircuitBreaker');
+const registry        = require('./lib/ServiceRegistry');
+const loadBalancer    = require('./lib/LoadBalancer');
+const circuitBreakers = require('./lib/CircuitBreaker');
 
 /**
  * serviceDiscoveryPlugin – đăng ký các route cho:

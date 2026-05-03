@@ -61,7 +61,7 @@ function callUnary(client, method, request) {
  */
 async function withRetry(fn, maxRetries = MAX_RETRIES) {
   let lastErr;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await fn();
     } catch (err) {
@@ -69,7 +69,7 @@ async function withRetry(fn, maxRetries = MAX_RETRIES) {
       if (err.message.includes('Circuit OPEN')) throw err;
       lastErr = err;
 
-      if (attempt < maxRetries) {
+      if (attempt < maxRetries - 1) {
         const delay = BASE_DELAY_MS * Math.pow(2, attempt);   // 200ms, 400ms, 800ms
         console.warn(`[Retry] Attempt ${attempt + 1}/${maxRetries} failed: ${err.message}. Retrying in ${delay}ms...`);
         await sleep(delay);
