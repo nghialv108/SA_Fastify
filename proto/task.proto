@@ -1,13 +1,92 @@
 syntax = "proto3";
+
 package task;
-//
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TaskService – quản lý công việc trong dự án
+// Bổ sung: WatchProjectTasks (Server-side Streaming RPC)
+// ─────────────────────────────────────────────────────────────────────────────
 service TaskService {
-    // Các phương thức RPC
-  rpc CreateTask (CreateTaskRequest) returns (TaskResponse);
-  // Streaming RPC để liệt kê tất cả các task của một project
-  rpc ListProjectTasks (ListTasksRequest) returns (stream TaskResponse); // Streaming
+  // ── Unary RPCs (cũ) ───────────────────────────────────────────────────────
+  rpc CreateTask           (CreateTaskRequest)        returns (TaskResponse);
+  rpc GetTask              (GetTaskRequest)            returns (TaskResponse);
+  rpc UpdateTask           (UpdateTaskRequest)         returns (TaskResponse);
+  rpc DeleteTask           (DeleteTaskRequest)         returns (DeleteTaskResponse);
+  rpc GetTasksByProject    (GetTasksByProjectRequest)  returns (TaskListResponse);
+
+  // ── Server-side Streaming RPC (MỚI) ──────────────────────────────────────
+  // Client gửi 1 request (project_id), server liên tục stream TaskEvent về
+  // theo thứ tự:
+  //   1. SNAPSHOT – toàn bộ task hiện có trong project
+  //   2. CREATED / UPDATED / DELETED – mỗi khi có thay đổi trong MongoDB
+  // Stream kết thúc khi: client huỷ (cancel) hoặc service bị dừng.
+  rpc WatchProjectTasks    (WatchTasksRequest)         returns (stream TaskEvent);
 }
 
-message CreateTaskRequest { string title = 1; string project_id = 2; }
-message ListTasksRequest { string project_id = 1; }
-message TaskResponse { string id = 1; string title = 2; string project_id = 3; string status = 4; }
+// ── Messages ─────────────────────────────────────────────────────────────────
+
+message Task {
+  string id          = 1;
+  string title       = 2;
+  string description = 3;
+  string status      = 4;   // "todo" | "in_progress" | "done"
+  string priority    = 5;   // "low"  | "medium" | "high"
+  string project_id  = 6;
+  string assignee_id = 7;
+  string created_at  = 8;
+  string updated_at  = 9;
+}
+
+// ── Streaming messages ────────────────────────────────────────────────────────
+
+message WatchTasksRequest {
+  string project_id = 1;
+}
+
+// Server stream từng TaskEvent về client
+message TaskEvent {
+  string    event_type = 1;   // "SNAPSHOT" | "CREATED" | "UPDATED" | "DELETED"
+  Task      task       = 2;
+  string    timestamp  = 3;   // ISO-8601
+}
+
+// ── Unary messages ────────────────────────────────────────────────────────────
+
+message CreateTaskRequest {
+  string title       = 1;
+  string description = 2;
+  string project_id  = 3;
+  string assignee_id = 4;
+  string priority    = 5;
+}
+
+message GetTaskRequest {
+  string id = 1;
+}
+
+message GetTasksByProjectRequest {
+  string project_id = 1;
+}
+
+message UpdateTaskRequest {
+  string id          = 1;
+  string status      = 2;
+  string priority    = 3;
+  string assignee_id = 4;
+}
+
+message DeleteTaskRequest {
+  string id = 1;
+}
+
+message TaskResponse {
+  Task task = 1;
+}
+
+message TaskListResponse {
+  repeated Task tasks = 1;
+}
+
+message DeleteTaskResponse {
+  bool success = 1;
+}

@@ -1,13 +1,25 @@
 services:
-  # 1. Thêm Service MongoDB
+
+  # ── Database ────────────────────────────────────────────────────────────────
+
   mongodb:
     image: mongo:6.0
+    # Bật Replica Set để MongoDB Change Stream hoạt động (cần cho Streaming RPC)
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "27017:27017"
     volumes:
-      - mongo-data:/data/db # Lưu trữ dữ liệu vĩnh viễn
+      - mongo-data:/data/db
+      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - pms-net
+
+  # ── User Service ─────────────────────────────────────────────────────────────
 
   user-service:
     build: ./user-service
@@ -15,13 +27,20 @@ services:
       - ./user-service:/app
       - /app/node_modules
       - ./proto:/proto
+      - ./shared:/shared  # ← shared/serviceRegister.js
     environment:
-      # Kết nối riêng vào database có tên: user_db
       - MONGO_URI=mongodb://mongodb:27017/user_db
+      - SERVICE_NAME=user-service
+      - SERVICE_HOST=user-service
+      - GRPC_PORT=50051
+      - GATEWAY_URL=http://api-gateway:3000
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     networks:
       - pms-net
+
+  # ── Project Service ───────────────────────────────────────────────────────────
 
   project-service:
     build: ./project-service
@@ -29,27 +48,65 @@ services:
       - ./project-service:/app
       - /app/node_modules
       - ./proto:/proto
+      - ./shared:/shared
     environment:
-      # Kết nối riêng vào database có tên: project_db
       - MONGO_URI=mongodb://mongodb:27017/project_db
+      - SERVICE_NAME=project-service
+      - SERVICE_HOST=project-service
+      - GRPC_PORT=50051
+      - GATEWAY_URL=http://api-gateway:3000
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     networks:
       - pms-net
 
-  task-service:
+  # ── Task Service – INSTANCE 1 ─────────────────────────────────────────────────
+  # Chạy 2 instance để demo Load Balancing (Round-Robin)
+  # Cả 2 đều đăng ký vào ServiceRegistry với SERVICE_NAME="task-service"
+  # API Gateway sẽ phân phối request luân phiên giữa 2 instance
+
+  task-service-1:
     build: ./task-service
     volumes:
       - ./task-service:/app
       - /app/node_modules
       - ./proto:/proto
+      - ./shared:/shared
     environment:
-      # Kết nối riêng vào database có tên: task_db
       - MONGO_URI=mongodb://mongodb:27017/task_db
+      - SERVICE_NAME=task-service        # ← Cùng tên để LB group lại
+      - SERVICE_HOST=task-service-1      # ← Hostname riêng của instance 1
+      - GRPC_PORT=50051
+      - GATEWAY_URL=http://api-gateway:3000
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     networks:
       - pms-net
+
+  # ── Task Service – INSTANCE 2 ─────────────────────────────────────────────────
+
+  task-service-2:
+    build: ./task-service
+    volumes:
+      - ./task-service:/app
+      - /app/node_modules
+      - ./proto:/proto
+      - ./shared:/shared
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/task_db
+      - SERVICE_NAME=task-service        # ← Cùng tên → cùng group LB
+      - SERVICE_HOST=task-service-2      # ← Hostname riêng của instance 2
+      - GRPC_PORT=50051
+      - GATEWAY_URL=http://api-gateway:3000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - pms-net
+
+  # ── API Gateway ───────────────────────────────────────────────────────────────
 
   api-gateway:
     build: ./api-gateway
@@ -59,10 +116,12 @@ services:
       - ./api-gateway:/app
       - /app/node_modules
       - ./proto:/proto
+      - ./shared:/shared
     depends_on:
       - user-service
       - project-service
-      - task-service
+      - task-service-1
+      - task-service-2
     networks:
       - pms-net
 
@@ -70,6 +129,5 @@ networks:
   pms-net:
     driver: bridge
 
-# Khai báo volume cho MongoDB
 volumes:
   mongo-data:
