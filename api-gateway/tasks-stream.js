@@ -20,7 +20,7 @@
  *   - ERROR     : lỗi từ service
  */
 
-const { callServerStream } = require('../lib/FaultTolerantClient');
+const { callServerStream } = require('./lib/FaultTolerantClient');
 
 async function taskStreamRoutes(fastify) {
 
@@ -29,9 +29,9 @@ async function taskStreamRoutes(fastify) {
 
     // ── SSE Headers ──────────────────────────────────────────────────────────
     reply.raw.writeHead(200, {
-      'Content-Type':      'text/event-stream',
-      'Cache-Control':     'no-cache',
-      'Connection':        'keep-alive',
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no',   // tắt buffer của Nginx proxy
     });
 
@@ -41,12 +41,12 @@ async function taskStreamRoutes(fastify) {
     let grpcStream;
     try {
       grpcStream = callServerStream({
-        protoFile:   'task.proto',
-        package:     'task',
-        service:     'TaskService',
+        protoFile: 'task.proto',
+        package: 'task',
+        service: 'TaskService',
         grpcService: 'task-service',
-        method:      'watchProjectTasks',
-        request:     { project_id: projectId },
+        method: 'watchProjectTasks',
+        request: { project_id: projectId },
       });
     } catch (err) {
       // Load balancer hoặc circuit breaker từ chối
@@ -139,8 +139,8 @@ async function watchProjectTasks(call) {
     for (const task of existingTasks) {
       call.write({
         event_type: 'SNAPSHOT',
-        task:       toProtoTask(task),
-        timestamp:  new Date().toISOString(),
+        task: toProtoTask(task),
+        timestamp: new Date().toISOString(),
       });
     }
     console.log(`[WatchProjectTasks] Sent ${existingTasks.length} snapshot tasks`);
@@ -153,10 +153,10 @@ async function watchProjectTasks(call) {
 
     changeStream.on('change', (change) => {
       const eventTypeMap = {
-        insert:  'CREATED',
-        update:  'UPDATED',
+        insert: 'CREATED',
+        update: 'UPDATED',
         replace: 'UPDATED',
-        delete:  'DELETED',
+        delete: 'DELETED',
       };
       const eventType = eventTypeMap[change.operationType];
       if (!eventType) return;
@@ -164,8 +164,8 @@ async function watchProjectTasks(call) {
       const doc = change.fullDocument || change.documentKey;
       call.write({
         event_type: eventType,
-        task:       toProtoTask(doc),
-        timestamp:  new Date().toISOString(),
+        task: toProtoTask(doc),
+        timestamp: new Date().toISOString(),
       });
     });
 
@@ -190,14 +190,14 @@ async function watchProjectTasks(call) {
 function toProtoTask(doc) {
   if (!doc) return {};
   return {
-    id:          String(doc._id || ''),
-    title:       doc.title || '',
+    id: String(doc._id || ''),
+    title: doc.title || '',
     description: doc.description || '',
-    status:      doc.status || 'todo',
-    priority:    doc.priority || 'medium',
-    project_id:  doc.projectId || '',
+    status: doc.status || 'todo',
+    priority: doc.priority || 'medium',
+    project_id: doc.projectId || '',
     assignee_id: doc.assigneeId || '',
-    created_at:  doc.createdAt ? doc.createdAt.toISOString() : '',
-    updated_at:  doc.updatedAt ? doc.updatedAt.toISOString() : '',
+    created_at: doc.createdAt ? doc.createdAt.toISOString() : '',
+    updated_at: doc.updatedAt ? doc.updatedAt.toISOString() : '',
   };
 }
